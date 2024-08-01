@@ -1,0 +1,472 @@
+---
+title: "ANTONIO PLAISANT"
+output: html_document
+date: "2024-05-21"
+---
+```{r}
+library(labelled)
+library(jtools)
+library(MatchIt)
+library(tidyverse)
+library(cobalt)
+```
+#DATASET
+```{r}
+data = easySHARE_rel8_0_0[c("mergeid","country","int_year", "wave" ,"wavepart", "age","bmi" ,"bmi2","smoking","ever_smoked", "chronic_mod" , "br010_mod" , "female" , "isced1997_r")] 
+
+
+
+data <- data %>%
+  filter(
+    !(chronic_mod %in% c(-13, -14, -15 , -12)) &
+    !(age %in% c(-13, -14, -15 , -12 , -10)) &
+    !(bmi2 %in% c(-10, -13, -14, -15 , -12 , -3)) &
+    !(smoking %in% c(-10, -13, -14, -15 , -12)) &
+    !(br010_mod%in% c(-10, -13, -14, -15 , -12 , -3)) &
+    !(ever_smoked%in% c(-10, -13, -14, -15 , -12 , -3))&
+    !(isced1997_r %in% c(-15,-12,95,97))
+      )
+
+
+data$age <- round(data$age, digits = 0)
+data$age <- na.omit(data$age)
+data$bmi <- as.numeric(data$bmi)
+
+data <- data %>%
+  mutate(country_name = case_when(
+    country == 11 ~ "Austria",
+    country == 12 ~ "Germany",
+    country == 13 ~ "Sweden",
+    country == 14 ~ "Netherland",
+    country == 15 ~ "Spain",
+    country == 16 ~ "Italy",
+    country == 17 ~ "France",
+    country == 18 ~ "Denmark",
+    country == 19 ~ "Greece",
+    country == 20 ~ "Switzerland",
+    country == 23 ~ "Belgium",
+    country == 25 ~ "Israel",
+    country == 28 ~ "Czech Republic",
+    country == 29 ~ "Poland",
+    country == 30 ~ "Ireland",
+    country == 31 ~ "Luxemburg",
+    country == 32 ~ "Hungary",
+    country == 33 ~ "Portugal",
+    country == 34 ~ "Slovenia",
+    country == 35 ~ "Estonia",
+    country == 47 ~ "Croatia",
+    country == 48 ~ "Lithuania",
+    country == 51 ~ "Bulgaria",
+    country == 53 ~ "Cyprus",
+    country == 55 ~ "Finland",
+    country == 57 ~ "Latvia",
+    country == 59 ~ "Malta",
+    country == 61 ~ "Romania",
+    country == 63 ~ "Slovakia"))
+
+data <- data %>%
+  filter(!country %in% c(25,31,53,59))
+
+data <- data %>%
+  mutate(treatment = case_when(
+    country %in% c(11, 23, 55, 17, 12, 14, 61, 20) ~ 0,
+    TRUE ~ 1
+  ))
+
+data <- data %>%
+  mutate(before_and_after = case_when(
+    wave %in% c(1,2)~ 0 , 
+    TRUE ~ 1
+  ))
+
+data$smoking[data$smoking == 5] <- 0
+data$ever_smoked[data$ever_smoked == 5] <- 0
+
+data <- data %>%
+  select(-country)
+
+data <- data %>%
+  select(country_name, everything())
+
+data <- data %>%
+  mutate(Str = str_detect(wavepart, "234"))%>%
+  filter(Str == TRUE)
+
+#data$wave <- as.factor(data$wave)
+#data$bmi <- as.factor(data$bmi)
+#data$smoking <- as.factor(data$smoking)
+#data$female <- as.factor(data$female)
+#data$before_and_after <- as.factor(data$before_and_after)
+#data$treatment <- as.factor(data$treatment)
+#data$ever_smoked <- as.factor(data$ever_smoked)
+```
+
+regressione individui wave 234, uso mergeid come cluster, correggono delle distorsioni , le osservazioni non sono indipendenti mentre per le ipotesi della regressione dovrebbero esserlo quindi dobbiamo tenerne conto con il cluster.
+
+```{r}
+data%>%
+  filter(wave %in% c(2,4))%>%
+  lm(chronic_mod ~  treatment*before_and_after , data = .)%>%
+  summ(robust = "HC1" , cluster = "country_name" , digits = 6)
+```
+EFFETTO NEGATIVO -0.073407
+
+Nel dataset in questione data  , filtrando restano solo osservazioni per 12 paesi
+AUSTRIA NO CRISI
+BELGIO NO CRISI
+SVIZZERA NO CRISI
+OLANDA NO CRISI
+FRANCIA NO CRISI
+GERMANIA NO CRISI
+
+ITALIA MODERATA
+POLONIA MODERATA
+SVEZIA MODERATA
+DANIMARCA MODERATA
+REPUBLICA CECA MODERATA
+SPAGNA SEVERA
+
+------------------------------------------------------------------------------------------------------
+tutti i grafici sono riferiti ai dati pre trattamento wave 2
+```{r}
+data %>%
+  filter(wave == 2)%>%
+  filter(age > 50, age < 90, !is.na(age)) %>%
+  mutate(Treated = case_when(treatment == 1 ~ "Yes", treatment == 0 ~ "No")) %>%
+  mutate(age_group = cut(age, breaks = c( 50, 60, 70, 80, 90, 105), labels = c( "51-60", "61-70", "71-80", "81-90", "91-105"))) %>%
+  group_by(age_group ,Treated) %>%
+  summarise(mean_chronic = mean(chronic_mod, na.rm = TRUE),
+            sd_chronic = sd(chronic_mod, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_chronic = sd_chronic / sqrt(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Treated, color = Treated)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(
+       x = "Age Group",
+       y = "Chronic Diseases",
+       color = "Treatment") +
+  theme_minimal()
+```
+
+
+```{r}
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  mutate(Sex = case_when(female == 1 ~ "Female", female == 0 ~ "Male")) %>%
+  mutate(age_group = cut(age, breaks = c( 50, 60, 70, 80, 90), labels = c(  "51-60", "61-70", "71-80", "81-90"))) %>%
+  group_by(age_group, Sex) %>%
+  summarise(mean_chronic = mean(chronic_mod, na.rm = TRUE),
+            sd_chronic = sd(chronic_mod, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_chronic = sd_chronic / sqrt(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Sex, color = Sex)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.1) +
+  labs(
+       x = "Age group",
+       y = "Chronic Diseases",
+       color = "Sex") +
+  theme_minimal()
+```
+```{r}
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  mutate(BMI = factor(case_when(
+    bmi2 == 1 ~ "Underweight",
+    bmi2 == 2 ~ "Normal",
+    bmi2 == 3 ~ "Overweight",
+    bmi2 == 4 ~ "Obese"
+  ), levels = c("Underweight", "Normal", "Overweight", "Obese"))) %>%
+  mutate(age_group = cut(age, breaks = c(50, 60, 70, 80, 90), labels = c("51-60", "61-70", "71-80", "81-90"))) %>%
+  group_by(age_group, BMI) %>%
+  summarise(
+    mean_chronic = mean(chronic_mod, na.rm = TRUE),
+    sd_chronic = sd(chronic_mod, na.rm = TRUE),
+    n = n(),
+    .groups = 'drop'
+  ) %>%
+  mutate(se_chronic = sd_chronic / sqrt(n)) %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = BMI, color = BMI)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(
+    
+    x = "Age Group",
+    y = "Chronic Diseases",
+    color = "BMI"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  #filter(br010_mod %in% c(7 , 6 , 1 ))%>%
+  mutate(Drinking = factor(case_when(
+    br010_mod == 1 ~ "Not at all",
+    br010_mod == 2 ~ "Less than once a month",
+    br010_mod == 3 ~ "Once or twice a month",
+    br010_mod == 4 ~ "Once or twice a week",
+    br010_mod == 5 ~ "Three of four days a week",
+    br010_mod == 6 ~ "Five or six days a week",
+    br010_mod == 7 ~ "Almost every day"
+  ), levels = c("Not at all", "Less than once a month", "Once or twice a month", "Once or twice a week","Three of four days a week","Five or six days a week","Almost every day"))) %>%
+  mutate(age_group = cut(age, breaks = c(50, 60, 70, 80, 90, 105), labels = c("51-60", "61-70", "71-80", "81-90", "91-105"))) %>%
+  group_by(age_group, Drinking) %>%
+  summarise(
+    mean_chronic = mean(chronic_mod, na.rm = TRUE),
+    sd_chronic = sd(chronic_mod, na.rm = TRUE),
+    n = n(),
+    .groups = 'drop'
+  ) %>%
+  mutate(se_chronic = sd_chronic / sqrt(n)) %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Drinking, color = Drinking)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(
+    
+    x = "Age Group",
+    y = "Chronic diseases",
+    color = "Drinking Behaviour"
+  ) +
+  theme_minimal()
+```
+```{r}
+
+
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  mutate(Drinking = factor(case_when(
+    br010_mod %in% c(1,2,3) ~ "Not at all",
+    br010_mod %in% c( 4,5,6,7) ~ "Frequently",
+
+  ), levels = c("Not at all", "Frequently"))) %>%
+  mutate(age_group = cut(age, breaks = c(50, 60, 70, 80, 90, 105), labels = c("51-60", "61-70", "71-80", "81-90", "91-105"))) %>%
+  group_by(age_group, Drinking) %>%
+  summarise(
+    mean_chronic = mean(chronic_mod, na.rm = TRUE),
+    sd_chronic = sd(chronic_mod, na.rm = TRUE),
+    n = n(),
+    .groups = 'drop'
+  ) %>%
+  mutate(se_chronic = sd_chronic / sqrt(n)) %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Drinking, color = Drinking)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(
+    x = "Age Group",
+    y = "Chronic Diseases",
+    color = "Drinking Behaviour"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  filter(isced1997_r %in% c(0,1,2,3,4,5))%>%
+  mutate(Education = case_when(
+    isced1997_r == 0 ~ "None",
+    isced1997_r == 1 ~ "Primary Education",
+    isced1997_r == 2 ~ "Lower Secondary",
+    isced1997_r == 3 ~ "Secondary Education",
+    isced1997_r == 4 ~ "Post Secondary Education",
+    isced1997_r == 5 ~ "First Stage of Tertiary Education",
+    isced1997_r == 6 ~ "Second Stage of Tertiary Education"
+  )) %>%
+  mutate(age_group = cut(age, breaks = c( 50, 60, 70, 80, 90), labels = c( "51-60", "61-70", "71-80", "81-90"))) %>%
+  group_by(age_group, Education) %>%
+  summarise(
+    mean_chronic = mean(chronic_mod, na.rm = TRUE),
+    sd_chronic = sd(chronic_mod, na.rm = TRUE),
+    n = n(),
+    se_chronic = sd_chronic / sqrt(n),
+    .groups = 'drop'
+  ) %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Education, color = Education)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(
+    
+    x = "Age group",
+    y = "Chronic Diseases",
+    color = "Education"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  mutate(Smoke = case_when(ever_smoked == 1 ~ "Smoker", ever_smoked == 0 ~ "No-Smoker")) %>%
+  mutate(age_group = cut(age, breaks = c( 50, 60, 70, 80, 90), labels = c(  "51-60", "61-70", "71-80", "81-90"))) %>%
+  group_by(age_group, Smoke) %>%
+  summarise(mean_chronic = mean(chronic_mod, na.rm = TRUE),
+            sd_chronic = sd(chronic_mod, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_chronic = sd_chronic / sqrt(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Smoke, color = Smoke)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(,
+       x = "Age group",
+       y = "Chronic Diseases",
+       color = "Smoke") +
+  theme_minimal()
+
+```
+effetto di cross over
+
+
+DEFINIAMO IL PRETREATMENT DATASET, TUTTI INDIVIDUI WAVE 2
+```{r}
+preTreatment <- data %>%
+  filter(wave == 2)
+```
+```{r}
+dati_m <- data %>%
+  filter(wave %in% c(2,4))
+```
+
+
+metodo subclass
+```{r}
+m.out1 <- matchit(treatment ~ age + factor(female)+factor(ever_smoked)+factor(bmi2)+factor(isced1997_r) +factor(br010_mod), data = preTreatment, method =  "subclass" , distance = "glm"  )
+summary(m.out1)
+
+```
+
+```{r}
+love.plot(m.out1 , stats = c("mean.diffs") , var.order = "unadjusted")
+```
+```{r}
+preTreat_model1 <- match.data(m.out1)
+preTreat_model1%>%
+    remove_val_labels()%>%
+    select(mergeid , weights)%>%
+    inner_join(dati_m , by = c("mergeid"))%>%
+    filter(wave %in% c(2,4))%>%
+  lm(chronic_mod ~ treatment*before_and_after , data =. , weights = weights)%>%
+  summ(robust = "HC1" , cluster = "country_name" , digits = 6)
+```
+
+
+fai vedere stime con diversi sistemi
+
+```{r}
+m.out2 <-  matchit(treatment ~ age + factor(female)+factor(ever_smoked)+factor(bmi2)+factor(isced1997_r) +factor(br010_mod), data = preTreatment, method =  "nearest" , distance = "glm" , caliper = 0.1 , replace = TRUE, ratio = 3 )
+summary(m.out2)
+
+love.plot(m.out2,stats = c("mean.diffs") , var.order = "unadjusted" )
+```
+
+```{r}
+preTreat_model2 <- match.data(m.out2)
+preTreat_model2%>%
+    remove_val_labels()%>%
+    select(mergeid , weights)%>%
+    inner_join(dati_m , by = c("mergeid"))%>%
+    filter(wave %in% c(2,4))%>%
+  lm(chronic_mod ~ treatment*before_and_after , data =. , weights = weights)%>%
+  summ(robust = "HC1" , cluster = "country_name" , digits = 6)
+```
+
+# scrivi una mail al professore
+
+
+```{r}
+preTreat_model1 %>%
+  group_by(country_name)%>%
+  count(treatment)
+```
+```{r}
+data_no_spain <- data %>% 
+  filter(
+    !(country_name == "Spain"))
+```
+
+facciamo la regressione senza bilanciare, 
+
+```{r}
+data_no_spain %>%
+  filter(wave %in% c(2,4))%>%
+  lm(chronic_mod ~ treatment*before_and_after , data = .)%>%
+  summ(robust = "HC1" , cluster = "mergeid" , digits = 10)
+```
+
+
+
+
+```{r}
+
+
+data %>%
+  filter(wave == 2) %>%
+  filter(age > 50, age < 90) %>%
+  mutate(Education = case_when(
+    isced1997_r %in% c(0, 1, 2) ~ "Low Education",
+    isced1997_r %in% c(3, 4) ~ "Mid Education",
+    isced1997_r %in% c(5, 6) ~ "High Education"
+  )) %>%
+  mutate(age_group = cut(age, breaks = c(50, 60, 70, 80, 90), labels = c("51-60", "61-70", "71-80", "81-90"))) %>%
+  group_by(age_group, Education) %>%
+  summarise(
+    mean_chronic = mean(chronic_mod, na.rm = TRUE),
+    sd_chronic = sd(chronic_mod, na.rm = TRUE),
+    n = n(),
+    se_chronic = sd_chronic / sqrt(n),
+    .groups = 'drop'
+  ) %>%
+  ggplot(aes(x = age_group, y = mean_chronic, group = Education, color = Education)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_errorbar(aes(ymin = mean_chronic - se_chronic, ymax = mean_chronic + se_chronic), width = 0.2) +
+  labs(
+    x = "Group age",
+    y = "Chronic diseases",
+    color = "Education"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
